@@ -314,17 +314,21 @@ def mensaje_whatsapp(lista, cuando, inicio_mes, ahora):
 
 
 def destinos_whatsapp(texto):
-    destinos = []
+    """Lee WHATSAPP_DESTINOS. Devuelve (destinos válidos, cantidad de líneas mal escritas).
+    Acepta 'numero:clave' con espacios, guiones o + en el número."""
+    destinos, malas = [], 0
     for parte in re.split(r"[\n,;]+", texto or ""):
         parte = parte.strip()
         if not parte:
             continue
-        numero, _, clave = parte.partition(":")
+        numero, sep, clave = parte.partition(":")
         numero = re.sub(r"\D", "", numero)
-        if not numero or not clave.strip():
-            raise SystemExit("WHATSAPP_DESTINOS tiene una línea mal escrita: tiene que ser numero:clave.")
-        destinos.append((numero, clave.strip()))
-    return destinos
+        clave = re.sub(r"(?i)^\s*(apikey\s*=?)\s*", "", clave).strip()
+        if not sep or len(numero) < 10 or not clave:
+            malas += 1
+            continue
+        destinos.append((numero, clave))
+    return destinos, malas
 
 
 def enviar_whatsapp(destinos, texto):
@@ -415,7 +419,7 @@ def main():
 
     tg_token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     tg_chat = os.environ.get("TELEGRAM_CHAT", "").strip()
-    destinos_wa = destinos_whatsapp(os.environ.get("WHATSAPP_DESTINOS", ""))
+    destinos_wa, wa_malas = destinos_whatsapp(os.environ.get("WHATSAPP_DESTINOS", ""))
     lista, cuando, inicio_mes = recordatorios(del_mes, ahora)
     mensajes = mensajes_telegram(lista, cuando, inicio_mes, ahora) if lista else []
     texto_wa = mensaje_whatsapp(lista, cuando, inicio_mes, ahora) if lista else ""
@@ -425,7 +429,7 @@ def main():
             print(f"\n--- {nombre} ---\n{contenido}")
         print(f"\n--- Telegram ({'configurado' if tg_token and tg_chat else 'sin configurar'}) ---")
         print("\n\n".join(mensajes) if mensajes else f"(no se manda: no hay visitas que venzan {cuando})")
-        print(f"\n--- WhatsApp ({len(destinos_wa)} destino(s)) ---")
+        print(f"\n--- WhatsApp ({len(destinos_wa)} destino(s) válidos, {wa_malas} línea(s) mal escrita(s)) ---")
         print(texto_wa or f"(no se manda: no hay visitas que venzan {cuando})")
         return
 
@@ -448,6 +452,8 @@ def main():
         except SystemExit as e:
             print(e)
             errores.append(str(e))
+    if wa_malas:
+        errores.append(f"WHATSAPP_DESTINOS tiene {wa_malas} línea(s) mal escrita(s): el formato es numero:clave, por ejemplo 5492211234567:123456")
     if destinos_wa:
         fallaron = enviar_whatsapp(destinos_wa, texto_wa)
         if fallaron:

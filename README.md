@@ -64,12 +64,73 @@ Cuando llegue ese e-mail, avisale a Claude para que cambie la tarea programada.
 
 ---
 
+## Avisos de vencimiento por Telegram
+
+Además del e-mail, el script manda el aviso de vencimientos a un grupo de Telegram,
+gratis y con la API oficial de Telegram. Usa las mismas reglas que el e-mail:
+
+- Corrida de las 9:30: visitas que vencen **hoy**.
+- Corrida de las 13:30: visitas que vencen **mañana** (los viernes, de sábado a lunes).
+- Si no vence ninguna, no se manda nada.
+
+Las personas que tienen que recibir los avisos solo necesitan tener Telegram y estar en el grupo.
+
+### 1. Crear el bot (una vez, lo hace Daniel)
+
+1. En Telegram, buscá **@BotFather** (tiene la tilde azul de verificado) y abrí el chat.
+2. Mandale `/newbot`.
+3. Te pide un nombre: por ejemplo `Avisos visitas ART`.
+4. Te pide un usuario que termine en `bot`: por ejemplo `avisos_visitas_pampafox_bot`
+   (si está tomado, probá otro).
+5. Te responde con un **token**, parecido a `123456789:AAH...`. Copialo y no lo compartas:
+   quien lo tenga puede mandar mensajes con el bot.
+
+### 2. Crear el grupo
+
+1. En Telegram: **Nuevo grupo**. Agregá a las dos personas y al bot (buscalo por su usuario,
+   por ejemplo `avisos_visitas_pampafox_bot`).
+2. Ponele un nombre, por ejemplo `Visitas ART`.
+3. Dentro del grupo, mandá este mensaje (cambiando por el usuario de tu bot):
+   `/start@avisos_visitas_pampafox_bot`
+
+### 3. Averiguar el número del grupo
+
+1. En el navegador, abrí esta dirección reemplazando `TOKEN` por el token del paso 1:
+   `https://api.telegram.org/botTOKEN/getUpdates`
+2. Buscá en el texto `"chat":{"id":` seguido de un número **negativo**, por ejemplo
+   `-4512345678` o `-1001234567890`. Ese número, con el signo menos, es el del grupo.
+3. Si la página muestra `"result":[]` (vacío), mandá otra vez el `/start@...` en el grupo y
+   recargá la página.
+
+### 4. Cargar los secretos en GitHub
+
+En el repositorio: **Settings → Secrets and variables → Actions → New repository secret**.
+
+| Nombre | Valor |
+| --- | --- |
+| `TELEGRAM_TOKEN` | el token del paso 1 |
+| `TELEGRAM_CHAT` | el número del grupo del paso 3, con el signo menos |
+
+### 5. Probar
+
+**Actions → Datos de visitas → Run workflow** con **Solo probar** marcado: en el registro
+aparece el texto del aviso tal como saldría (o que no hay visitas que venzan).
+Después, una corrida normal lo manda al grupo.
+
+En las corridas manuales podés desmarcar **Mandar también el aviso por Telegram**
+si solo querés actualizar los datos del tablero sin repetir el aviso.
+
+Para sumar o sacar a alguien de los avisos, agregalo o quitalo del grupo: no hace falta tocar GitHub.
+
+---
+
 ## Si algo falla
 
 - **GitHub te avisa por e-mail** cada vez que una corrida falla.
 - En la corrida fallida, abajo de todo, hay una **captura-error** con la imagen de la página en el momento del error.
 - "rechazó el usuario o la contraseña": revisá `PREV_USUARIO` y `PREV_CLAVE`. Si cambiás la contraseña de la web, actualizá ese secreto.
 - "Username and Password not accepted" (Gmail): revisá `GMAIL_CLAVE_APP`; si hace falta, creá una contraseña de aplicación nueva.
+- "Telegram rechazó el mensaje": el e-mail de datos salió igual. Si dice *chat not found* o *group chat was upgraded*, el número del grupo cambió: repetí el paso 3 y actualizá `TELEGRAM_CHAT`. Si dice *Unauthorized*, revisá `TELEGRAM_TOKEN`. Si dice *bot was kicked*, volvé a agregar el bot al grupo.
 - Si la web bloquea las conexiones desde servidores de GitHub (están en EE. UU.), el login va a fallar siempre aunque los datos estén bien. En ese caso hay que pasar a un servidor virtual en Argentina o Brasil.
 
 ## Mantenimiento

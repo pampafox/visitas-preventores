@@ -1,0 +1,53 @@
+name: Datos de visitas (Web de Preventores)
+
+on:
+  schedule:
+    # Lunes a viernes 9:30 y 13:30 hora de Buenos Aires (12:30 y 16:30 UTC).
+    # GitHub puede demorar unos minutos en arrancar los horarios programados.
+    - cron: "30 12,16 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      solo_probar:
+        description: "Solo probar (no manda el e-mail, muestra los datos en el registro)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: visitas
+  cancel-in-progress: false
+
+jobs:
+  visitas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Leer la Web de Preventores y mandar los datos
+        env:
+          PREV_USUARIO: ${{ secrets.PREV_USUARIO }}
+          PREV_CLAVE: ${{ secrets.PREV_CLAVE }}
+          GMAIL_USUARIO: ${{ secrets.GMAIL_USUARIO }}
+          GMAIL_CLAVE_APP: ${{ secrets.GMAIL_CLAVE_APP }}
+          MAIL_PARA: ${{ secrets.MAIL_PARA }}
+          SOLO_PROBAR: ${{ inputs.solo_probar && '1' || '0' }}
+        run: python actualizar_visitas.py
+
+      - name: Guardar captura si falló
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: captura-error
+          path: error.png
+          if-no-files-found: ignore
+          retention-days: 7

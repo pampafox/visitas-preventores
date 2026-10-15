@@ -8,11 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       solo_probar:
-        description: "Solo probar (no manda nada, muestra los datos y el aviso de Telegram en el registro)"
+        description: "Solo probar (no manda nada, muestra los datos y los avisos en el registro)"
         type: boolean
         default: false
       telegram:
-        description: "Mandar también el aviso por Telegram"
+        description: "Mandar también el aviso por Telegram y WhatsApp"
         type: boolean
         default: true
 
@@ -46,6 +46,7 @@ jobs:
           MAIL_PARA: ${{ secrets.MAIL_PARA }}
           TELEGRAM_TOKEN: ${{ (github.event_name == 'schedule' || inputs.telegram) && secrets.TELEGRAM_TOKEN || '' }}
           TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
+          WHATSAPP_DESTINOS: ${{ (github.event_name == 'schedule' || inputs.telegram) && secrets.WHATSAPP_DESTINOS || '' }}
           SOLO_PROBAR: ${{ inputs.solo_probar && '1' || '0' }}
         run: python actualizar_visitas.py
 

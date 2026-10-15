@@ -7,8 +7,10 @@ Corre en GitHub Actions. Las credenciales llegan por variables de entorno
   PREV_USUARIO, PREV_CLAVE        usuario y contraseña de la Web de Preventores
   GMAIL_USUARIO, GMAIL_CLAVE_APP  cuenta de Gmail que envía y su contraseña de aplicación
   MAIL_PARA                       a quién se manda (por defecto, la misma cuenta de Gmail)
-  TELEGRAM_TOKEN, TELEGRAM_CHAT    opcional: token del bot y número del grupo de Telegram
+  TELEGRAM_TOKEN, TELEGRAM_CHAT   opcional: token del bot y número del grupo de Telegram
                                   al que se mandan los avisos de vencimiento
+  WHATSAPP_DESTINOS               opcional: copia del aviso por WhatsApp con CallMeBot,
+                                  un destino por línea con el formato numero:clave
 Opcional:
   SOLO_PROBAR=1                   no manda nada, solo muestra el resultado en el registro
 """
@@ -292,6 +294,61 @@ def enviar_telegram(token, chat_id, mensajes):
     print(f"Telegram: {len(mensajes)} mensaje(s) enviados al grupo.")
 
 
+# ---------------------------------------------------------------- WhatsApp (CallMeBot)
+
+def mensaje_whatsapp(lista, cuando, inicio_mes, ahora):
+    n = len(lista)
+    lineas = [f"⚠️👷 *Visitas ART: {n} {'visita que vence' if n == 1 else 'visitas que vencen'} {cuando}*", ""]
+    for i, f in enumerate(lista, 1):
+        empresa = f["empresa"] + (" (otro período)" if f["fecha_desde"] and f["fecha_desde"] < inicio_mes else "")
+        lineas += [
+            f"{i}. *{empresa}*",
+            f"{f['tarea']}",
+            f"👤 {f['preventor']} · {f['estado']}",
+            f"📅 Vence: {dd_mm(f['fecha_hasta'])}",
+            f"📍 {f['domicilio']}, {f['localidad']}",
+            "",
+        ]
+    lineas.append(f"_Datos actualizados: {ahora.strftime('%d/%m/%Y %H:%M')}_")
+    return "\n".join(lineas)
+
+
+def destinos_whatsapp(texto):
+    destinos = []
+    for parte in re.split(r"[\n,;]+", texto or ""):
+        parte = parte.strip()
+        if not parte:
+            continue
+        numero, _, clave = parte.partition(":")
+        numero = re.sub(r"\D", "", numero)
+        if not numero or not clave.strip():
+            raise SystemExit("WHATSAPP_DESTINOS tiene una línea mal escrita: tiene que ser numero:clave.")
+        destinos.append((numero, clave.strip()))
+    return destinos
+
+
+def enviar_whatsapp(destinos, texto):
+    """Manda el texto con CallMeBot a cada número. Devuelve los finales de los números que fallaron."""
+    fallaron = []
+    for i, (numero, clave) in enumerate(destinos):
+        if i:
+            time.sleep(5)  # CallMeBot pide no mandar mensajes seguidos
+        url = "https://api.callmebot.com/whatsapp.php?" + urllib.parse.urlencode(
+            {"phone": numero, "text": texto, "apikey": clave})
+        try:
+            with urllib.request.urlopen(url, timeout=90) as r:
+                respuesta = r.read().decode("utf-8", "replace")
+            texto_resp = re.sub(r"<[^>]+>", " ", respuesta)
+            if re.search(r"error|paused|invalid|not\s+allowed", texto_resp, re.I) and not re.search(r"queued|sent", texto_resp, re.I):
+                raise RuntimeError(re.sub(r"\s+", " ", texto_resp).strip()[:200])
+            print(f"WhatsApp enviado a ...{numero[-4:]}")
+        except Exception as e:
+            # No se muestra la clave: solo el final del número y el error.
+            print(f"No se pudo mandar el WhatsApp a ...{numero[-4:]}: {e}")
+            fallaron.append(numero[-4:])
+    return fallaron
+
+
 # ------------------------------------------------------------------ e-mail
 
 def armar_mail(ahora, csvs, cuentas, remitente, destino):
@@ -358,14 +415,18 @@ def main():
 
     tg_token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     tg_chat = os.environ.get("TELEGRAM_CHAT", "").strip()
+    destinos_wa = destinos_whatsapp(os.environ.get("WHATSAPP_DESTINOS", ""))
     lista, cuando, inicio_mes = recordatorios(del_mes, ahora)
     mensajes = mensajes_telegram(lista, cuando, inicio_mes, ahora) if lista else []
+    texto_wa = mensaje_whatsapp(lista, cuando, inicio_mes, ahora) if lista else ""
 
     if probar:
         for nombre, contenido in csvs.items():
             print(f"\n--- {nombre} ---\n{contenido}")
         print(f"\n--- Telegram ({'configurado' if tg_token and tg_chat else 'sin configurar'}) ---")
         print("\n\n".join(mensajes) if mensajes else f"(no se manda: no hay visitas que venzan {cuando})")
+        print(f"\n--- WhatsApp ({len(destinos_wa)} destino(s)) ---")
+        print(texto_wa or f"(no se manda: no hay visitas que venzan {cuando})")
         return
 
     msg = armar_mail(ahora, csvs, cuentas, gmail, destino)
@@ -374,13 +435,25 @@ def main():
         s.send_message(msg)
     print(f"E-mail enviado a {destino}.")
 
-    if not (tg_token and tg_chat):
+    if not lista:
+        print(f"Avisos: no hay visitas que venzan {cuando}, no se manda nada.")
         return
-    if not mensajes:
-        print(f"Telegram: no hay visitas que venzan {cuando}, no se manda nada.")
-        return
-    # Si falla, el e-mail de datos ya salió; la corrida queda en rojo para que GitHub avise.
-    enviar_telegram(tg_token, tg_chat, mensajes)
+
+    # Cada canal se intenta aunque el otro falle. Si alguno falla, la corrida queda
+    # en rojo al final para que GitHub avise (el e-mail de datos ya salió).
+    errores = []
+    if tg_token and tg_chat:
+        try:
+            enviar_telegram(tg_token, tg_chat, mensajes)
+        except SystemExit as e:
+            print(e)
+            errores.append(str(e))
+    if destinos_wa:
+        fallaron = enviar_whatsapp(destinos_wa, texto_wa)
+        if fallaron:
+            errores.append("No se pudo mandar el WhatsApp a los números terminados en: " + ", ".join(fallaron))
+    if errores:
+        raise SystemExit(" | ".join(errores))
 
 if __name__ == "__main__":
     sys.exit(main())

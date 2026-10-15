@@ -7,18 +7,26 @@ Corre en GitHub Actions. Las credenciales llegan por variables de entorno
   PREV_USUARIO, PREV_CLAVE        usuario y contraseña de la Web de Preventores
   GMAIL_USUARIO, GMAIL_CLAVE_APP  cuenta de Gmail que envía y su contraseña de aplicación
   MAIL_PARA                       a quién se manda (por defecto, la misma cuenta de Gmail)
+  TELEGRAM_TOKEN, TELEGRAM_CHAT    opcional: token del bot y número del grupo de Telegram
+                                  al que se mandan los avisos de vencimiento
 Opcional:
-  SOLO_PROBAR=1                   no manda el e-mail, solo muestra el resultado en el registro
+  SOLO_PROBAR=1                   no manda nada, solo muestra el resultado en el registro
 """
 
 import calendar
 import csv
+import html
 import io
+import json
 import os
 import re
 import smtplib
 import sys
-from datetime import date, datetime
+import time
+import urllib.parse
+import urllib.error
+import urllib.request
+from datetime import date, datetime, timedelta
 from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
@@ -191,7 +199,7 @@ def armar_csvs(asignadas, no_asignadas, hoy):
     no_asig = [f for f in no_asig if inicio_mes <= f["fecha_hasta"] <= fin_mes]
     no_asig.sort(key=lambda f: (f["fecha_hasta"], f["empresa"], clave_num(f["establecimiento"])))
 
-    return {
+    return del_mes, {
         "visitas.csv": a_csv(COL_VISITAS, del_mes),
         "vencidas.csv": a_csv(COL_VENCIDAS, vencidas),
         "no_asignadas.csv": a_csv(COL_NO_ASIG, no_asig),
@@ -202,6 +210,86 @@ def armar_csvs(asignadas, no_asignadas, hoy):
         "no_asignadas_leidas": len(no_asignadas),
         "no_asignadas_mes": len(no_asig),
     }
+
+
+# ---------------------------------------------------------------- Telegram
+
+def dd_mm(iso):
+    return f"{iso[8:10]}/{iso[5:7]}/{iso[0:4]}" if iso else ""
+
+
+def esc(texto):
+    """Escapa texto para el modo HTML de Telegram."""
+    return html.escape(str(texto or ""), quote=False)
+
+
+def recordatorios(del_mes, ahora):
+    """Mismas reglas que el e-mail de vencimientos: antes de las 12 las que vencen
+    hoy; después, las que vencen mañana (viernes: sábado a lunes).
+    El vencimiento es siempre la Fecha hasta."""
+    hoy = ahora.date()
+    if ahora.hour < 12:
+        fechas, cuando = [hoy], "hoy"
+    elif hoy.weekday() == 4:
+        fechas, cuando = [hoy + timedelta(days=d) for d in (1, 2, 3)], "entre el sábado y el lunes"
+    else:
+        fechas, cuando = [hoy + timedelta(days=1)], "mañana"
+    buscadas = {f.isoformat() for f in fechas}
+    inicio_mes = hoy.replace(day=1).isoformat()
+    lista = [f for f in del_mes if f["fecha_hasta"] in buscadas and f["estado"] != "Realizada"]
+    lista.sort(key=lambda f: (f["fecha_hasta"], f["empresa"]))
+    return lista, cuando, inicio_mes
+
+
+def mensajes_telegram(lista, cuando, inicio_mes, ahora, limite=3800):
+    """Arma el aviso en HTML de Telegram. Si es muy largo lo parte en varios mensajes."""
+    n = len(lista)
+    titulo = f"⚠️👷 <b>Visitas ART: {n} {'visita que vence' if n == 1 else 'visitas que vencen'} {cuando}</b>"
+    pie = f"<i>Datos actualizados: {ahora.strftime('%d/%m/%Y %H:%M')}</i>"
+    bloques = []
+    for i, f in enumerate(lista, 1):
+        empresa = f["empresa"] + (" (otro período)" if f["fecha_desde"] and f["fecha_desde"] < inicio_mes else "")
+        bloques.append("\n".join([
+            f"{i}. <b>{esc(empresa)}</b>",
+            f"{esc(f['tarea'])}",
+            f"👤 {esc(f['preventor'])} · {esc(f['estado'])}",
+            f"📅 Vence: {dd_mm(f['fecha_hasta'])}",
+            f"📍 {esc(f['domicilio'])}, {esc(f['localidad'])}",
+        ]))
+    mensajes, actual = [], titulo
+    for b in bloques:
+        if len(actual) + len(b) + 2 > limite:
+            mensajes.append(actual)
+            actual = b
+        else:
+            actual += "\n\n" + b
+    mensajes.append(actual + "\n\n" + pie)
+    return mensajes
+
+
+def enviar_telegram(token, chat_id, mensajes):
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    for i, texto in enumerate(mensajes):
+        if i:
+            time.sleep(1)
+        datos = urllib.parse.urlencode({
+            "chat_id": chat_id, "text": texto, "parse_mode": "HTML",
+            "disable_web_page_preview": "true",
+        }).encode()
+        try:
+            with urllib.request.urlopen(url, data=datos, timeout=60) as r:
+                respuesta = json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            try:
+                respuesta = json.loads(e.read().decode())
+            except Exception:
+                respuesta = {"ok": False, "description": str(e)}
+        except urllib.error.URLError as e:
+            raise SystemExit(f"No se pudo conectar con Telegram: {e.reason}")
+        if not respuesta.get("ok"):
+            # No se muestra el token: solo la descripción del error de Telegram.
+            raise SystemExit("Telegram rechazó el mensaje: " + str(respuesta.get("description", "error desconocido")))
+    print(f"Telegram: {len(mensajes)} mensaje(s) enviados al grupo.")
 
 
 # ------------------------------------------------------------------ e-mail
@@ -265,12 +353,19 @@ def main():
         finally:
             navegador.close()
 
-    csvs, cuentas = armar_csvs(asignadas, no_asignadas, hoy)
+    del_mes, csvs, cuentas = armar_csvs(asignadas, no_asignadas, hoy)
     print("Resultado:", cuentas)
+
+    tg_token = os.environ.get("TELEGRAM_TOKEN", "").strip()
+    tg_chat = os.environ.get("TELEGRAM_CHAT", "").strip()
+    lista, cuando, inicio_mes = recordatorios(del_mes, ahora)
+    mensajes = mensajes_telegram(lista, cuando, inicio_mes, ahora) if lista else []
 
     if probar:
         for nombre, contenido in csvs.items():
             print(f"\n--- {nombre} ---\n{contenido}")
+        print(f"\n--- Telegram ({'configurado' if tg_token and tg_chat else 'sin configurar'}) ---")
+        print("\n\n".join(mensajes) if mensajes else f"(no se manda: no hay visitas que venzan {cuando})")
         return
 
     msg = armar_mail(ahora, csvs, cuentas, gmail, destino)
@@ -279,6 +374,13 @@ def main():
         s.send_message(msg)
     print(f"E-mail enviado a {destino}.")
 
+    if not (tg_token and tg_chat):
+        return
+    if not mensajes:
+        print(f"Telegram: no hay visitas que venzan {cuando}, no se manda nada.")
+        return
+    # Si falla, el e-mail de datos ya salió; la corrida queda en rojo para que GitHub avise.
+    enviar_telegram(tg_token, tg_chat, mensajes)
 
 if __name__ == "__main__":
     sys.exit(main())

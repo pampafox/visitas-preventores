@@ -2,9 +2,9 @@ name: Datos de visitas (Web de Preventores)
 
 on:
   schedule:
-    # Lunes a viernes 9:30 y 13:30 hora de Buenos Aires (12:30 y 16:30 UTC).
+    # Lunes a viernes 9:07 y 13:07 hora de Buenos Aires (12:07 y 16:07 UTC).
     # GitHub puede demorar unos minutos en arrancar los horarios programados.
-    - cron: "30 12,16 * * 1-5"
+    - cron: "7 12,16 * * 1-5"    
   workflow_dispatch:
     inputs:
       solo_probar:

@@ -226,11 +226,11 @@ def esc(texto):
 
 
 def recordatorios(del_mes, ahora):
-    """Mismas reglas que el e-mail de vencimientos: antes de las 12 las que vencen
-    hoy; después, las que vencen mañana (viernes: sábado a lunes).
-    El vencimiento es siempre la Fecha hasta."""
+    """Mismas reglas que el e-mail de vencimientos: en las corridas de antes de las 15
+    (7:25 y 12:30) las que vencen hoy; en la de la tarde (16:30), las que vencen
+    mañana (viernes: sábado a lunes). El vencimiento es siempre la Fecha hasta."""
     hoy = ahora.date()
-    if ahora.hour < 12:
+    if ahora.hour < 15:
         fechas, cuando = [hoy], "hoy"
     elif hoy.weekday() == 4:
         fechas, cuando = [hoy + timedelta(days=d) for d in (1, 2, 3)], "entre el sábado y el lunes"

@@ -21,7 +21,8 @@ concurrency:
 
 jobs:
   visitas:
-    runs-on:     runs-on: ubuntu-24.04
+    # Fijado a Ubuntu 24.04: ubuntu-latest pasó a 26.04 y Playwright 1.56 no lo soporta.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4

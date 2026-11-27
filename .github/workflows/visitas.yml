@@ -1,11 +1,9 @@
 name: Datos de visitas (Web de Preventores)
 
 on:
-  schedule:
-    # Lunes a viernes 7:25, 12:30 y 16:30 hora de Buenos Aires (10:25, 15:30 y 19:30 UTC).
-    # GitHub puede demorar unos minutos en arrancar los horarios programados.
-    - cron: "25 10 * * 1-5"
-    - cron: "30 15,19 * * 1-5"
+  # Sin horario propio de GitHub: los horarios programados de GitHub se demoraban
+  # horas o se salteaban. La corrida la lanza cron-job.org (lunes a viernes 8:30,
+  # 13:30 y 17:30, hora de Buenos Aires) o el botón del celular, con workflow_dispatch.
   workflow_dispatch:
     inputs:
       solo_probar:
@@ -23,7 +21,7 @@ concurrency:
 
 jobs:
   visitas:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -45,10 +43,10 @@ jobs:
           GMAIL_USUARIO: ${{ secrets.GMAIL_USUARIO }}
           GMAIL_CLAVE_APP: ${{ secrets.GMAIL_CLAVE_APP }}
           MAIL_PARA: ${{ secrets.MAIL_PARA }}
-          TELEGRAM_TOKEN: ${{ (github.event_name == 'schedule' || inputs.telegram) && secrets.TELEGRAM_TOKEN || '' }}
+          TELEGRAM_TOKEN: ${{ (github.event_name == 'schedule' || inputs.telegram != false) && secrets.TELEGRAM_TOKEN || '' }}
           TELEGRAM_CHAT: ${{ secrets.TELEGRAM_CHAT }}
-          WHATSAPP_DESTINOS: ${{ (github.event_name == 'schedule' || inputs.telegram) && secrets.WHATSAPP_DESTINOS || '' }}
-          SOLO_PROBAR: ${{ inputs.solo_probar && '1' || '0' }}
+          WHATSAPP_DESTINOS: ${{ (github.event_name == 'schedule' || inputs.telegram != false) && secrets.WHATSAPP_DESTINOS || '' }}
+          SOLO_PROBAR: ${{ inputs.solo_probar == true && '1' || '0' }}
         run: python actualizar_visitas.py
 
       - name: Guardar captura si falló
